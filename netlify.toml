@@ -1,5 +1,9 @@
 [build]
-     functions = "netlify/functions"
+  functions = "netlify/functions"
 
-   [functions]
-     directory = "netlify/functions"
+[functions]
+  directory = "netlify/functions"
+
+[[functions]]
+  name = "process-statement"
+  timeout = 60
