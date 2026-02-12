@@ -1,19 +1,5 @@
 [build]
-  functions = "netlify/functions"
+     functions = "netlify/functions"
 
-[functions]
-  directory = "netlify/functions"
-```
-
-### **Step 5: Scroll down and click "Commit new file"**
-
----
-
-## ✅ **AFTER YOU ADD IT:**
-
-Your repo structure should look like:
-```
-netlify.toml          ← You just created this!
-netlify/
-  └── functions/
-      └── process-statement.js
+   [functions]
+     directory = "netlify/functions"
