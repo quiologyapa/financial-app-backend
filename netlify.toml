@@ -3,7 +3,7 @@
 
 [functions]
   directory = "netlify/functions"
+  node_bundler = "esbuild"
 
-[[functions]]
-  name = "process-statement"
+[functions."process-statement"]
   timeout = 60
