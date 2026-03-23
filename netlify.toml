@@ -1,0 +1,19 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[functions."process-statement"]
+  timeout = 60
+
+[functions."sync-data"]
+  timeout = 10
+
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Content-Type, x-fintrack-pin"
+    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
