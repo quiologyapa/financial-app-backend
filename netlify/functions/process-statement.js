@@ -1,8 +1,4 @@
-// Netlify Function: process-statement.js
-// This runs on Netlify's servers, so no CORS issues!
-
 exports.handler = async (event, context) => {
-  // CORS headers for all responses
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -10,88 +6,53 @@ exports.handler = async (event, context) => {
     'Content-Type': 'application/json'
   };
 
-  // Handle OPTIONS preflight request
   if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: ''
-    };
+    return { statusCode: 200, headers, body: '' };
   }
 
-  // Only allow POST requests
   if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: 'Method not allowed' })
-    };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
   try {
-    const { pdfBase64, apiKey, model } = JSON.parse(event.body);
-    
-    if (!pdfBase64 || !apiKey) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: 'Missing pdfBase64 or apiKey' })
-      };
+    let body;
+    try {
+      body = JSON.parse(event.body);
+    } catch(e) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON body' }) };
     }
 
-    // Use provided model or default to Sonnet 4
+    const { pdfBase64, apiKey, model } = body;
+
+    if (!pdfBase64) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing pdfBase64' }) };
+    if (!apiKey)    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing apiKey' }) };
+
+    // Check size — base64 PDF should be under 4MB
+    const sizeKB = Math.round(pdfBase64.length / 1024);
+    console.log(`PDF base64 size: ${sizeKB} KB`);
+    if (pdfBase64.length > 5000000) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: `PDF too large (${sizeKB} KB). Please use a smaller statement.` }) };
+    }
+
     const selectedModel = model || 'claude-sonnet-4-20250514';
-    console.log('Processing bank statement with model:', selectedModel);
+    console.log('Using model:', selectedModel);
 
-    const prompt = `You are analyzing a bank statement PDF. Extract ALL transactions and categorize them for a restaurant business.
+    const prompt = `Analyze this bank statement and extract ALL transactions.
 
-Extract each transaction with:
-1. Date (YYYY-MM-DD format)
-2. Description/Merchant
-3. Amount (positive number, no currency symbols)
-4. Suggested Category (from the list below)
+For each transaction return:
+- date: YYYY-MM-DD format
+- merchant: merchant/description name
+- amount: positive number only
+- category: one of these exact values:
+  Food & Supplies, Beverage, Utilities, Rent, Payroll, Equipment, Marketing,
+  Maintenance & Repairs, Insurance, Licenses & Permits, Professional Services,
+  Office Supplies, Sales Tax, Payroll Taxes, Bank Fees, Credit Card Fees, Other
 
-CATEGORIES (choose most appropriate):
-- Food & Supplies
-- Beverage
-- Utilities
-- Rent
-- Payroll
-- Equipment
-- Marketing
-- Maintenance & Repairs
-- Insurance
-- Licenses & Permits
-- Professional Services
-- Office Supplies
-- Sales Tax
-- Payroll Taxes
-- Other Taxes
-- Bank Fees
-- Credit Card Fees
-- Transaction Fees
-- Other
+Return ONLY raw JSON, no markdown, no backticks, no explanation:
+{"transactions":[{"date":"2026-01-15","merchant":"SYSCO FOODS","amount":1234.56,"category":"Food & Supplies"}]}`;
 
-CRITICAL INSTRUCTIONS:
-- Extract EVERY SINGLE transaction from the statement
-- Do NOT skip deposits, transfers, or payments - include EVERYTHING
-- If you're unsure what category, use "Other"
-- Extract ALL pages of the statement
-- Return as many transactions as you can find (could be 100+)
+    console.log('Calling Anthropic API...');
 
-Return ONLY valid JSON (no markdown, no backticks):
-{
-  "transactions": [
-    {
-      "date": "2026-02-15",
-      "merchant": "SYSCO FOODS",
-      "amount": 1234.56,
-      "category": "Food & Supplies"
-    }
-  ]
-}`;
-
-    // Call Anthropic API
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -101,88 +62,50 @@ Return ONLY valid JSON (no markdown, no backticks):
       },
       body: JSON.stringify({
         model: selectedModel,
-        max_tokens: 16000,
+        max_tokens: 8000,
         messages: [{
           role: 'user',
           content: [
             {
               type: 'document',
-              source: {
-                type: 'base64',
-                media_type: 'application/pdf',
-                data: pdfBase64
-              }
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
             },
-            {
-              type: 'text',
-              text: prompt
-            }
+            { type: 'text', text: prompt }
           ]
         }]
       })
     });
 
+    console.log('Anthropic response status:', response.status);
+
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Anthropic API error:', errorData);
-      return {
-        statusCode: response.status,
-        headers,
-        body: JSON.stringify({ 
-          error: `Anthropic API error: ${errorData.error?.message || response.statusText}` 
-        })
-      };
+      let errMsg = response.statusText;
+      try { const e = await response.json(); errMsg = e.error?.message || errMsg; } catch {}
+      return { statusCode: response.status, headers, body: JSON.stringify({ error: `Anthropic API error: ${errMsg}` }) };
     }
 
     const data = await response.json();
-    const responseText = data.content[0].text;
-    
-    console.log('AI response received');
+    const text = data.content?.[0]?.text || '';
+    console.log('Response length:', text.length);
 
-    // Parse JSON response
-    let jsonData;
+    let parsed;
     try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      jsonData = JSON.parse(jsonMatch ? jsonMatch[0] : responseText);
-    } catch (e) {
-      console.error('Could not parse response:', responseText);
-      return {
-        statusCode: 500,
-        headers,
-        body: JSON.stringify({ 
-          error: 'Could not parse AI response',
-          raw: responseText 
-        })
-      };
+      const match = text.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(match ? match[0] : text);
+    } catch(e) {
+      console.error('JSON parse failed. Raw:', text.slice(0, 500));
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Could not parse AI response as JSON', raw: text.slice(0, 200) }) };
     }
 
-    if (!jsonData.transactions || jsonData.transactions.length === 0) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ 
-          error: 'No transactions found in statement' 
-        })
-      };
+    if (!parsed.transactions?.length) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'No transactions found in statement' }) };
     }
 
-    console.log(`Extracted ${jsonData.transactions.length} transactions`);
+    console.log(`Returning ${parsed.transactions.length} transactions`);
+    return { statusCode: 200, headers, body: JSON.stringify(parsed) };
 
-    // Return success
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify(jsonData)
-    };
-
-  } catch (error) {
-    console.error('Function error:', error);
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ 
-        error: error.message || 'Internal server error' 
-      })
-    };
+  } catch(error) {
+    console.error('Unhandled error:', error.message);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: error.message || 'Internal server error' }) };
   }
 };
