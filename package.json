@@ -1,0 +1,8 @@
+{
+  "name": "fintrack-backend",
+  "version": "1.0.0",
+  "description": "FinTrack Netlify Functions",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
